@@ -18,12 +18,14 @@ std = ["prost/std"]
 
 # Support conversion between Timestamp and chrono::DateTime
 chrono-conversions = ["chrono"]
-
+# Derive serde traits for the structs defined in this crate (unless they contain optional fields)
+serde-derive = ["serde"]
 
 [dependencies]
 bytes = { version = "1", default-features = false }
 prost = { version = "0.7.0", path = "..", default-features = false, features = ["prost-derive"] }
 chrono = { version = "0.4", optional = true }
+serde = { version = "1.0", features = ["derive"], optional = true}
 
 [dev-dependencies]
 proptest = "0.9"
