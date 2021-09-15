@@ -187,6 +187,11 @@ impl<'a> CodeGenerator<'a> {
         self.buf
             .push_str("#[derive(Clone, PartialEq, ::prost::Message)]\n");
         self.push_indent();
+        if let Some(ref a) = self.config.struct_attributes {
+            self.buf.push_str(a);
+            self.buf.push('\n');
+            self.push_indent();
+        }
         self.buf.push_str("pub struct ");
         self.buf.push_str(&to_upper_camel(&message_name));
         self.buf.push_str(" {\n");
@@ -504,6 +509,11 @@ impl<'a> CodeGenerator<'a> {
         self.buf
             .push_str("#[derive(Clone, PartialEq, ::prost::Oneof)]\n");
         self.push_indent();
+        if let Some(ref a) = self.config.enum_attributes {
+            self.buf.push_str(a);
+            self.buf.push('\n');
+            self.push_indent();
+        }
         self.buf.push_str("pub enum ");
         self.buf.push_str(&to_upper_camel(oneof.name()));
         self.buf.push_str(" {\n");

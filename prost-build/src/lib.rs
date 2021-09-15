@@ -226,6 +226,8 @@ pub struct Config {
     bytes_type: PathMap<BytesType>,
     type_attributes: PathMap<String>,
     field_attributes: PathMap<String>,
+    enum_attributes: Option<String>,
+    struct_attributes: Option<String>,
     prost_types: bool,
     strip_enum_prefix: bool,
     out_dir: Option<PathBuf>,
@@ -393,6 +395,22 @@ impl Config {
     {
         self.field_attributes
             .insert(path.as_ref().to_string(), attribute.as_ref().to_string());
+        self
+    }
+
+    pub fn enum_attribute<A>(&mut self, attribute: A) -> &mut Self
+    where
+        A: Into<String>,
+    {
+        self.enum_attributes = Some(attribute.into());
+        self
+    }
+
+    pub fn struct_attribute<A>(&mut self, attribute: A) -> &mut Self
+    where
+        A: Into<String>,
+    {
+        self.struct_attributes = Some(attribute.into());
         self
     }
 
@@ -857,6 +875,8 @@ impl default::Default for Config {
             bytes_type: PathMap::default(),
             type_attributes: PathMap::default(),
             field_attributes: PathMap::default(),
+            enum_attributes: None,
+            struct_attributes: None,
             prost_types: true,
             strip_enum_prefix: true,
             out_dir: None,
