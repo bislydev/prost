@@ -18,7 +18,7 @@ use crate::ast::{Comments, Method, Service};
 use crate::extern_paths::ExternPaths;
 use crate::ident::{to_snake, to_upper_camel};
 use crate::message_graph::MessageGraph;
-use crate::{BytesType, Config, MapType};
+use crate::{BytesType, Config, MapType, TypeFilter, TypeSelector, FieldSelector};
 
 #[derive(PartialEq)]
 enum Syntax {
@@ -182,7 +182,7 @@ impl<'a> CodeGenerator<'a> {
             });
 
         self.append_doc(&fq_message_name, None);
-        self.append_type_attributes(&fq_message_name);
+        self.append_type_attributes(&fq_message_name, TypeSelector::ProtobufMessage);
         self.push_indent();
         self.buf
             .push_str("#[derive(Clone, PartialEq, ::prost::Message)]\n");
@@ -260,25 +260,43 @@ impl<'a> CodeGenerator<'a> {
         }
     }
 
-    fn append_type_attributes(&mut self, fq_message_name: &str) {
-        assert_eq!(b'.', fq_message_name.as_bytes()[0]);
-        for attribute in self.config.type_attributes.get(fq_message_name) {
-            push_indent(&mut self.buf, self.depth);
-            self.buf.push_str(&attribute);
-            self.buf.push('\n');
+    fn ty_selector_matches_filter(ty_selector: TypeSelector, ty_filter: TypeFilter) -> bool {
+        ty_filter.is_set(ty_selector) || match ty_selector {
+            TypeSelector::ProtobufEnum => ty_filter.is_set(TypeSelector::RustEnum)
+                || ty_filter.is_set(TypeSelector::RustEnumCLike),
+            TypeSelector::ProtobufOneof => ty_filter.is_set(TypeSelector::RustEnum)
+                || ty_filter.is_set(TypeSelector::RustEnumWithData),
+            TypeSelector::ProtobufMessage => ty_filter.is_set(TypeSelector::RustStruct),
+            _ => false,
         }
     }
 
-    fn append_field_attributes(&mut self, fq_message_name: &str, field_name: &str) {
+    fn append_type_attributes(&mut self, fq_message_name: &str, ty_selector: TypeSelector) {
         assert_eq!(b'.', fq_message_name.as_bytes()[0]);
-        for attribute in self
+        for (attribute, ty_filter) in self.config.type_attributes.get(fq_message_name) {
+            if Self::ty_selector_matches_filter(ty_selector, *ty_filter) {
+                push_indent(&mut self.buf, self.depth);
+                self.buf.push_str(&attribute);
+                self.buf.push('\n');
+            }
+        }
+    }
+
+    fn append_field_attributes(&mut self, fq_message_name: &str, field_name: &str, ty_selector: TypeSelector, fld_selector: FieldSelector) {
+        assert_eq!(b'.', fq_message_name.as_bytes()[0]);
+        for (attribute, ty_filter, fld_filter) in self
             .config
             .field_attributes
             .get_field(fq_message_name, field_name)
         {
-            push_indent(&mut self.buf, self.depth);
-            self.buf.push_str(&attribute);
-            self.buf.push('\n');
+            let should_add = Self::ty_selector_matches_filter(ty_selector, *ty_filter)
+                && fld_filter.is_set(fld_selector);
+
+            if should_add {
+                push_indent(&mut self.buf, self.depth);
+                self.buf.push_str(&attribute);
+                self.buf.push('\n');
+            }
         }
     }
 
@@ -384,7 +402,12 @@ impl<'a> CodeGenerator<'a> {
         }
 
         self.buf.push_str("\")]\n");
-        self.append_field_attributes(fq_message_name, field.name());
+        self.append_field_attributes(
+            fq_message_name,
+            field.name(),
+            TypeSelector::ProtobufMessage,
+            FieldSelector::from(field.r#type()),
+        );
         self.push_indent();
         self.buf.push_str("pub ");
         self.buf.push_str(&to_snake(field.name()));
@@ -443,7 +466,12 @@ impl<'a> CodeGenerator<'a> {
             value_tag,
             field.number()
         ));
-        self.append_field_attributes(fq_message_name, field.name());
+        self.append_field_attributes(
+            fq_message_name,
+            field.name(),
+            TypeSelector::ProtobufMessage,
+            FieldSelector::MapField,
+        );
         self.push_indent();
         self.buf.push_str(&format!(
             "pub {}: {}<{}, {}>,\n",
@@ -476,7 +504,12 @@ impl<'a> CodeGenerator<'a> {
                 .map(|&(ref field, _)| field.number())
                 .join(", ")
         ));
-        self.append_field_attributes(fq_message_name, oneof.name());
+        self.append_field_attributes(
+            fq_message_name,
+            oneof.name(),
+            TypeSelector::ProtobufMessage,
+            FieldSelector::OneofField
+        );
         self.push_indent();
         self.buf.push_str(&format!(
             "pub {}: ::core::option::Option<{}>,\n",
@@ -499,7 +532,7 @@ impl<'a> CodeGenerator<'a> {
         self.path.pop();
 
         let oneof_name = format!("{}.{}", fq_message_name, oneof.name());
-        self.append_type_attributes(&oneof_name);
+        self.append_type_attributes(&oneof_name, TypeSelector::ProtobufOneof);
         self.push_indent();
         self.buf
             .push_str("#[derive(Clone, PartialEq, ::prost::Oneof)]\n");
@@ -524,7 +557,12 @@ impl<'a> CodeGenerator<'a> {
                 ty_tag,
                 field.number()
             ));
-            self.append_field_attributes(&oneof_name, field.name());
+            self.append_field_attributes(
+                &oneof_name,
+                field.name(),
+                TypeSelector::ProtobufOneof,
+                FieldSelector::from(field.r#type()),
+            );
 
             self.push_indent();
             let ty = self.resolve_type(&field, fq_message_name);
@@ -600,7 +638,7 @@ impl<'a> CodeGenerator<'a> {
         }
 
         self.append_doc(&fq_enum_name, None);
-        self.append_type_attributes(&fq_enum_name);
+        self.append_type_attributes(&fq_enum_name, TypeSelector::ProtobufEnum);
         self.push_indent();
         self.buf.push_str(
             "#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]\n",
@@ -646,7 +684,12 @@ impl<'a> CodeGenerator<'a> {
         prefix_to_strip: Option<String>,
     ) {
         self.append_doc(fq_enum_name, Some(value.name()));
-        self.append_field_attributes(fq_enum_name, &value.name());
+        self.append_field_attributes(
+            fq_enum_name,
+            &value.name(),
+            TypeSelector::ProtobufEnum,
+            FieldSelector::NoDataEnumVariant
+        );
         self.push_indent();
         let name = to_upper_camel(value.name());
         let name_unprefixed = match prefix_to_strip {

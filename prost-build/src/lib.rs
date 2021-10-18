@@ -115,6 +115,7 @@ mod extern_paths;
 mod ident;
 mod message_graph;
 mod path;
+mod filters;
 
 use std::collections::HashMap;
 use std::default;
@@ -131,6 +132,7 @@ use prost::Message;
 use prost_types::{FileDescriptorProto, FileDescriptorSet};
 
 pub use crate::ast::{Comments, Method, Service};
+pub use crate::filters::{TypeFilter, TypeSelector, FieldFilter, FieldSelector};
 use crate::code_generator::CodeGenerator;
 use crate::extern_paths::ExternPaths;
 use crate::ident::to_snake;
@@ -224,8 +226,8 @@ pub struct Config {
     service_generator: Option<Box<dyn ServiceGenerator>>,
     map_type: PathMap<MapType>,
     bytes_type: PathMap<BytesType>,
-    type_attributes: PathMap<String>,
-    field_attributes: PathMap<String>,
+    type_attributes: PathMap<(String, TypeFilter)>,
+    field_attributes: PathMap<(String, TypeFilter, FieldFilter)>,
     prost_types: bool,
     strip_enum_prefix: bool,
     out_dir: Option<PathBuf>,
@@ -393,8 +395,18 @@ impl Config {
         P: AsRef<str>,
         A: AsRef<str>,
     {
+        self.field_attribute_with_filter(path, attribute, TypeSelector::Everything, FieldSelector::Everything)
+    }
+
+    pub fn field_attribute_with_filter<P, A, TF, FF>(&mut self, path: P, attribute: A, type_filter: TF, field_filter: FF) -> &mut Self
+    where
+        P: AsRef<str>,
+        A: AsRef<str>,
+        TF: Into<TypeFilter>,
+        FF: Into<FieldFilter>,
+    {
         self.field_attributes
-            .insert(path.as_ref().to_string(), attribute.as_ref().to_string());
+            .insert(path.as_ref().to_string(), (attribute.as_ref().to_string(), type_filter.into(), field_filter.into()));
         self
     }
 
@@ -442,8 +454,30 @@ impl Config {
         P: AsRef<str>,
         A: AsRef<str>,
     {
+        self.type_attribute_with_filter(path, attribute, TypeSelector::Everything)
+    }
+
+    /// Add additional attribute to matched messages, enums and one-ofs, but only if filter
+    /// matches. Usage is similar to [`type_attribute`](#method.type_attribute).
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// # let mut config = prost_build::Config::new();
+    /// // Derive serde::Serialize on all enums
+    /// config.type_attribute_with_filter(".", "#[derive(Serialize)]", prost_build::TypeSelector::RustEnum);
+    /// // Use serde's adjacently tagged enum representation for all rust enums, that are not
+    /// // c-like.
+    /// config.type_attribute_with_filter(".", "#[serde(tag = \"kind\", content = \"data\")]", prost_build::TypeSelector::RustEnumWithData);
+    /// ```
+    pub fn type_attribute_with_filter<P, A, F>(&mut self, path: P, attribute: A, filter: F) -> &mut Self
+    where
+        P: AsRef<str>,
+        A: AsRef<str>,
+        F: Into<TypeFilter>,
+    {
         self.type_attributes
-            .insert(path.as_ref().to_string(), attribute.as_ref().to_string());
+            .insert(path.as_ref().to_string(), (attribute.as_ref().to_string(), filter.into()));
         self
     }
 
