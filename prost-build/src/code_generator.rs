@@ -18,7 +18,7 @@ use crate::ast::{Comments, Method, Service};
 use crate::extern_paths::ExternPaths;
 use crate::ident::{to_snake, to_upper_camel};
 use crate::message_graph::MessageGraph;
-use crate::{BytesType, Config, MapType, TypeFilter, TypeSelector, FieldSelector};
+use crate::{BytesType, Config, FieldSelector, LabelSelector, MapType, TypeFilter, TypeSelector};
 
 #[derive(PartialEq)]
 enum Syntax {
@@ -261,14 +261,19 @@ impl<'a> CodeGenerator<'a> {
     }
 
     fn ty_selector_matches_filter(ty_selector: TypeSelector, ty_filter: TypeFilter) -> bool {
-        ty_filter.is_set(ty_selector) || match ty_selector {
-            TypeSelector::ProtobufEnum => ty_filter.is_set(TypeSelector::RustEnum)
-                || ty_filter.is_set(TypeSelector::RustEnumCLike),
-            TypeSelector::ProtobufOneof => ty_filter.is_set(TypeSelector::RustEnum)
-                || ty_filter.is_set(TypeSelector::RustEnumWithData),
-            TypeSelector::ProtobufMessage => ty_filter.is_set(TypeSelector::RustStruct),
-            _ => false,
-        }
+        ty_filter.is_set(ty_selector)
+            || match ty_selector {
+                TypeSelector::ProtobufEnum => {
+                    ty_filter.is_set(TypeSelector::RustEnum)
+                        || ty_filter.is_set(TypeSelector::RustEnumCLike)
+                }
+                TypeSelector::ProtobufOneof => {
+                    ty_filter.is_set(TypeSelector::RustEnum)
+                        || ty_filter.is_set(TypeSelector::RustEnumWithData)
+                }
+                TypeSelector::ProtobufMessage => ty_filter.is_set(TypeSelector::RustStruct),
+                _ => false,
+            }
     }
 
     fn append_type_attributes(&mut self, fq_message_name: &str, ty_selector: TypeSelector) {
@@ -282,16 +287,23 @@ impl<'a> CodeGenerator<'a> {
         }
     }
 
-    fn append_field_attributes(&mut self, fq_message_name: &str, field_name: &str, ty_selector: TypeSelector, fld_selector: FieldSelector) {
+    fn append_field_attributes(
+        &mut self,
+        fq_message_name: &str,
+        field_name: &str,
+        ty_selector: TypeSelector,
+        lb_selector: LabelSelector,
+        fld_selector: FieldSelector,
+    ) {
         assert_eq!(b'.', fq_message_name.as_bytes()[0]);
-        for (attribute, ty_filter, fld_filter) in self
+        for (attribute, ty_filter, lb_filter, fld_filter) in self
             .config
             .field_attributes
             .get_field(fq_message_name, field_name)
         {
             let should_add = Self::ty_selector_matches_filter(ty_selector, *ty_filter)
-                && fld_filter.is_set(fld_selector);
-
+                && fld_filter.is_set(fld_selector)
+                && lb_filter.is_set(lb_selector);
             if should_add {
                 push_indent(&mut self.buf, self.depth);
                 self.buf.push_str(&attribute);
@@ -406,6 +418,13 @@ impl<'a> CodeGenerator<'a> {
             fq_message_name,
             field.name(),
             TypeSelector::ProtobufMessage,
+            if optional {
+                LabelSelector::Optional
+            } else if repeated {
+                LabelSelector::Repeated
+            } else {
+                LabelSelector::Required
+            },
             FieldSelector::from(field.r#type()),
         );
         self.push_indent();
@@ -470,6 +489,7 @@ impl<'a> CodeGenerator<'a> {
             fq_message_name,
             field.name(),
             TypeSelector::ProtobufMessage,
+            LabelSelector::Required,
             FieldSelector::MapField,
         );
         self.push_indent();
@@ -508,7 +528,8 @@ impl<'a> CodeGenerator<'a> {
             fq_message_name,
             oneof.name(),
             TypeSelector::ProtobufMessage,
-            FieldSelector::OneofField
+            LabelSelector::Optional,
+            FieldSelector::OneofField,
         );
         self.push_indent();
         self.buf.push_str(&format!(
@@ -561,6 +582,7 @@ impl<'a> CodeGenerator<'a> {
                 &oneof_name,
                 field.name(),
                 TypeSelector::ProtobufOneof,
+                LabelSelector::Required,
                 FieldSelector::from(field.r#type()),
             );
 
@@ -688,7 +710,8 @@ impl<'a> CodeGenerator<'a> {
             fq_enum_name,
             &value.name(),
             TypeSelector::ProtobufEnum,
-            FieldSelector::NoDataEnumVariant
+            LabelSelector::Required,
+            FieldSelector::NoDataEnumVariant,
         );
         self.push_indent();
         let name = to_upper_camel(value.name());
